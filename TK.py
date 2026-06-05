@@ -221,10 +221,154 @@ if "events"       not in st.session_state: st.session_state.events       = load_
 if "view"         not in st.session_state: st.session_state.view         = "Month"
 if "current_date" not in st.session_state: st.session_state.current_date = date.today()
 if "selected_date"not in st.session_state: st.session_state.selected_date= date.today()
-# Drag-to-create state
 if "drag_start"   not in st.session_state: st.session_state.drag_start   = None
 if "drag_end"     not in st.session_state: st.session_state.drag_end     = None
 if "pending_evt"  not in st.session_state: st.session_state.pending_evt  = None
+if "theme"        not in st.session_state: st.session_state.theme        = "Default"
+
+# ── Themes ─────────────────────────────────────────────────────────────────────
+THEMES = {
+    "Default":  {
+        "bg":      "linear-gradient(160deg,#0a0a1a,#0d1b2a,#0a0a1a)",
+        "accent":  "#64a0ff",
+        "accent2": "#b060ff",
+        "star1":   "rgba(140,200,255,0.3)",
+        "star2":   "rgba(200,160,255,0.3)",
+        "sidebar": "rgba(10,10,30,0.88)",
+        "today":   "rgba(100,160,255,0.15)",
+        "today_b": "rgba(100,160,255,0.50)",
+        "btn_bg":  "rgba(100,160,255,0.15)",
+        "btn_b":   "rgba(100,160,255,0.40)",
+        "dow":     "rgba(140,180,255,0.90)",
+        "hint":    "rgba(160,190,255,0.70)",
+    },
+    "Cyberpunk": {
+        "bg":      "linear-gradient(160deg,#1a0030,#0a0050,#001a33)",
+        "accent":  "#00ffee",
+        "accent2": "#ff00cc",
+        "star1":   "rgba(0,255,238,0.25)",
+        "star2":   "rgba(255,0,204,0.25)",
+        "sidebar": "rgba(10,0,30,0.92)",
+        "today":   "rgba(0,255,238,0.12)",
+        "today_b": "rgba(0,255,238,0.55)",
+        "btn_bg":  "rgba(0,255,238,0.12)",
+        "btn_b":   "rgba(0,255,238,0.40)",
+        "dow":     "rgba(0,255,238,0.85)",
+        "hint":    "rgba(0,255,238,0.60)",
+    },
+    "Sunset": {
+        "bg":      "linear-gradient(160deg,#1a0a05,#2a0a10,#1a0518)",
+        "accent":  "#ff7e5f",
+        "accent2": "#ffcc70",
+        "star1":   "rgba(255,126,95,0.30)",
+        "star2":   "rgba(255,204,112,0.30)",
+        "sidebar": "rgba(30,8,5,0.92)",
+        "today":   "rgba(255,126,95,0.15)",
+        "today_b": "rgba(255,126,95,0.55)",
+        "btn_bg":  "rgba(255,126,95,0.15)",
+        "btn_b":   "rgba(255,126,95,0.40)",
+        "dow":     "rgba(255,180,120,0.90)",
+        "hint":    "rgba(255,180,120,0.65)",
+    },
+    "Ocean": {
+        "bg":      "linear-gradient(160deg,#0a1628,#0a2035,#061420)",
+        "accent":  "#38bdf8",
+        "accent2": "#2193b0",
+        "star1":   "rgba(56,189,248,0.25)",
+        "star2":   "rgba(33,147,176,0.25)",
+        "sidebar": "rgba(6,14,28,0.92)",
+        "today":   "rgba(56,189,248,0.13)",
+        "today_b": "rgba(56,189,248,0.55)",
+        "btn_bg":  "rgba(56,189,248,0.13)",
+        "btn_b":   "rgba(56,189,248,0.40)",
+        "dow":     "rgba(100,210,255,0.90)",
+        "hint":    "rgba(100,210,255,0.65)",
+    },
+    "Midnight": {
+        "bg":      "linear-gradient(160deg,#000000,#080808,#0f172a)",
+        "accent":  "#a78bfa",
+        "accent2": "#6366f1",
+        "star1":   "rgba(167,139,250,0.25)",
+        "star2":   "rgba(99,102,241,0.25)",
+        "sidebar": "rgba(4,4,12,0.95)",
+        "today":   "rgba(167,139,250,0.13)",
+        "today_b": "rgba(167,139,250,0.55)",
+        "btn_bg":  "rgba(167,139,250,0.13)",
+        "btn_b":   "rgba(167,139,250,0.40)",
+        "dow":     "rgba(180,160,255,0.90)",
+        "hint":    "rgba(180,160,255,0.65)",
+    },
+}
+
+def t():
+    """Return current theme dict."""
+    return THEMES[st.session_state.theme]
+
+# Inject dynamic theme CSS
+_th = t()
+st.markdown(f"""
+<style>
+  .stApp {{
+    background: {_th["bg"]} !important;
+    min-height: 100vh;
+  }}
+  .stApp::before {{
+    background-image:
+      radial-gradient(1px 1px at 10% 20%, rgba(255,255,255,0.55) 0%, transparent 100%),
+      radial-gradient(1px 1px at 25% 75%, rgba(255,255,255,0.35) 0%, transparent 100%),
+      radial-gradient(1px 1px at 40% 10%, rgba(255,255,255,0.45) 0%, transparent 100%),
+      radial-gradient(1px 1px at 60% 50%, rgba(255,255,255,0.28) 0%, transparent 100%),
+      radial-gradient(1px 1px at 75% 30%, rgba(255,255,255,0.55) 0%, transparent 100%),
+      radial-gradient(1px 1px at 85% 80%, rgba(255,255,255,0.35) 0%, transparent 100%),
+      radial-gradient(2px 2px at 15% 55%, {_th["star1"]} 0%, transparent 100%),
+      radial-gradient(2px 2px at 90% 15%, {_th["star2"]} 0%, transparent 100%),
+      radial-gradient(1px 1px at 50% 90%, rgba(255,255,255,0.45) 0%, transparent 100%);
+  }}
+  [data-testid="stSidebar"] {{
+    background: {_th["sidebar"]} !important;
+  }}
+  .app-title {{
+    background: linear-gradient(90deg, {_th["accent"]}, {_th["accent2"]}) !important;
+    -webkit-background-clip: text !important;
+    -webkit-text-fill-color: transparent !important;
+    background-clip: text !important;
+  }}
+  .day-cell.today {{
+    background: {_th["today"]} !important;
+    border-color: {_th["today_b"]} !important;
+  }}
+  .day-cell.today .day-num {{ color: {_th["accent"]} !important; }}
+  .dow-cell {{ color: {_th["dow"]} !important; }}
+  .section-heading {{ color: {_th["dow"]} !important; opacity: 0.8; }}
+  .stButton > button {{
+    background: {_th["btn_bg"]} !important;
+    border: 1px solid {_th["btn_b"]} !important;
+  }}
+  .stButton > button:hover {{
+    background: {_th["btn_bg"].replace("0.13","0.28").replace("0.15","0.30").replace("0.12","0.26")} !important;
+    border-color: {_th["accent"]} !important;
+    box-shadow: 0 4px 20px {_th["accent"]}33 !important;
+  }}
+  .stForm [data-testid="stFormSubmitButton"] > button {{
+    background: {_th["btn_bg"].replace("0.13","0.22").replace("0.15","0.25").replace("0.12","0.20")} !important;
+    border: 1px solid {_th["accent"]}88 !important;
+  }}
+  /* Theme pill buttons in sidebar */
+  .theme-pill {{
+    display: inline-block;
+    padding: 4px 12px;
+    border-radius: 20px;
+    font-size: 0.72rem;
+    font-weight: 600;
+    cursor: pointer;
+    border: 1px solid rgba(255,255,255,0.20);
+    margin: 3px 2px;
+    color: #ffffff;
+    letter-spacing: 0.04em;
+    transition: all 0.2s;
+  }}
+</style>
+""", unsafe_allow_html=True)
 
 CATEGORY_COLORS = {
     "🔵 Work":      {"bg":"rgba(60,120,255,0.28)",  "border":"rgba(80,140,255,0.80)", "text":"#c0d8ff"},
