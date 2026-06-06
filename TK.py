@@ -792,4 +792,4 @@ elif view == "Search":
                         f'<div style="font-size:1.4rem;font-weight:800;color:{c["text"]}">{count}</div>'
                         f'<div style="font-size:0.7rem;color:{c["text"]};opacity:0.85">{cat}</div>'
                         f'</div>', unsafe_allow_html=True)
-PYEOF
+
