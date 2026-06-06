@@ -1,4 +1,4 @@
-cat > /mnt/user-data/outputs/cosmocal.py << 'PYEOF'
+
 import streamlit as st
 import json
 import calendar
