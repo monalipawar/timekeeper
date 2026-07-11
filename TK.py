@@ -6,7 +6,7 @@ import csv
 import io
 from datetime import datetime, date, timedelta
 
-st.set_page_config(
+st.set_page_config( 
     page_title="CosmoCal",
     page_icon="🌌",
     layout="wide",
