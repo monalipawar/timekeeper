@@ -6,7 +6,7 @@ import csv
 import io
 from datetime import datetime, date, timedelta
 
-st.set_page_config( 
+st.set_page_config(
     page_title="CosmoCal",
     page_icon="🌌",
     layout="wide",
@@ -234,7 +234,7 @@ def get_holiday(d):
 # ═══════════════════════════════════════════════════════════════════════════════
 _th = THEMES[st.session_state.theme]
 
-st.markdown(f"""
+st.html(f"""
 <link href="https://fonts.googleapis.com/css2?family=Outfit:wght@300;400;500;600;700;800&display=swap" rel="stylesheet">
 <style>
 html, body, [class*="css"] {{ font-family: 'Outfit', sans-serif !important; }}
@@ -511,7 +511,7 @@ hr {{ border:none; border-top:1px solid rgba(255,255,255,0.08) !important; margi
     border-radius: 8px; padding: 2px 8px; font-size: 1.2rem; cursor:pointer;
 }}
 </style>
-""", unsafe_allow_html=True)
+""")
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # SIDEBAR
