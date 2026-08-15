@@ -7,7 +7,7 @@ import io
 from datetime import datetime, date, timedelta
 
 st.set_page_config(
-    page_title="CosmoCal",
+    page_title="TimeKeeper",
     page_icon="🌌",
     layout="wide",
     initial_sidebar_state="expanded",
