@@ -960,9 +960,13 @@ elif view == "Week":
                 f'<div style="font-size:0.62rem;font-weight:700;letter-spacing:.09em;'
                 f'color:{_th["dow"]}">{day.strftime("%a").upper()}</div>'
                 f'<div style="font-size:1.2rem;font-weight:800;margin-bottom:2px;'
-                f'color:{""+_th["accent"] if is_today else "#ffffff"}">{day.day} {mood}</div>'
-                f'{"<div style=\\"font-size:0.58rem;color:rgba(255,220,100,0.80);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\\">"+holiday+"</div>" if holiday else ""}',
+                f'color:{""+_th["accent"] if is_today else "#ffffff"}">{day.day} {mood}</div>',
                 unsafe_allow_html=True)
+            if holiday:
+                st.markdown(
+                    f'<div style="font-size:0.58rem;color:rgba(255,220,100,0.80);margin-bottom:4px;'
+                    f'overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">{holiday}</div>',
+                    unsafe_allow_html=True)
             for e in events_for_date(day):
                 c = get_color(e.get("category","⚪ Other"))
                 icon = "🎂" if e.get("is_birthday") else ("🔁" if e.get("recurrence","None") != "None" or e.get("_recurring") else "")
@@ -1312,5 +1316,3 @@ elif view == "📤 Export":
         st.success(f"Added {added} holidays for {year_for_holidays}! 🎆")
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
-PYEOF
-python3 -c "import ast; ast.parse(open('/home/claude/cosmocal.py').read()); print('OK syntax')"
