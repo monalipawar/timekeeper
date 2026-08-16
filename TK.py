@@ -961,7 +961,7 @@ elif view == "Week":
                 f'color:{_th["dow"]}">{day.strftime("%a").upper()}</div>'
                 f'<div style="font-size:1.2rem;font-weight:800;margin-bottom:2px;'
                 f'color:{""+_th["accent"] if is_today else "#ffffff"}">{day.day} {mood}</div>'
-                f'{"<div style=\\"font-size:0.58rem;color:rgba(255,220,100,0.80);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\\">"+holiday+"</div>" if holiday else ""}',
+                f'{,"<div style=\\"font-size:0.58rem;color:rgba(255,220,100,0.80);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\\">"+holiday+"</div>" if holiday else ""}',
                 unsafe_allow_html=True)
             for e in events_for_date(day):
                 c = get_color(e.get("category","⚪ Other"))
