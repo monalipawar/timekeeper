@@ -1151,7 +1151,13 @@ function endDrag(){{
   const heightPx=parseFloat(dragBlock.style.height);
   const startHour=topPx/HOUR_PX, endHour=(topPx+heightPx)/HOUR_PX;
   const startStr=hourToTimeStr(startHour), endStr=hourToTimeStr(Math.max(endHour,startHour+0.25));
-  dragBlock.remove(); dragBlock=null;
+  // Lock the block visually in place (solid, confirmed) instead of removing it,
+  // so it doesn't just vanish while the page is about to reload.
+  dragBlock.style.background="{_th["accent"]}55";
+  dragBlock.style.border="1.5px solid {_th["accent"]}";
+  dragLabel.textContent="✓ "+startStr+" \u2013 "+endStr;
+  const lockedBlock=dragBlock, lockedLabel=dragLabel;
+  dragBlock=null; dragLabel=null;
   const url=new URL(window.parent.location.href);
   url.searchParams.set("drag_day","{cd.isoformat()}");
   url.searchParams.set("drag_time_start", startStr);
