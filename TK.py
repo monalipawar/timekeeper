@@ -7,7 +7,7 @@ import io
 from datetime import datetime, date, timedelta
 
 st.set_page_config(
-    page_title="TimeKeeper",
+    page_title="CosmoCal",
     page_icon="🌌",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -63,10 +63,29 @@ DEFAULTS = {
     "theme": "Default", "editing_evt": None,
     "search_query": "", "moods": {},
     "show_export": False,
+    "drag_range": None,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
         st.session_state[k] = v
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# READ DRAG SELECTION FROM QUERY PARAMS (set by the JS drag-select grid)
+# ═══════════════════════════════════════════════════════════════════════════════
+qp = st.query_params
+if "drag_start" in qp and "drag_end" in qp:
+    try:
+        ds = date.fromisoformat(qp["drag_start"])
+        de = date.fromisoformat(qp["drag_end"])
+        if ds > de:
+            ds, de = de, ds
+        st.session_state.drag_range = (ds, de)
+        st.session_state.selected_date = ds
+    except Exception:
+        pass
+    # clear so it doesn't re-trigger on every rerun
+    del st.query_params["drag_start"]
+    del st.query_params["drag_end"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERSISTENCE
@@ -145,6 +164,19 @@ def add_event(d, title, time_str, category, note="", recurrence="None", reminder
         "is_birthday": is_birthday, "id": datetime.now().timestamp(),
     })
     save_events(st.session_state.events)
+
+def add_multi_day_event(start_d, end_d, title, time_str, category, note="", reminder_min=0):
+    """Create one event per day across an inclusive date range (used by drag-to-create)."""
+    d = start_d
+    count = 0
+    span_note = note
+    if end_d > start_d:
+        span_note = (note + "\n" if note else "") + f"(Part of {start_d.isoformat()} \u2192 {end_d.isoformat()})"
+    while d <= end_d:
+        add_event(d, title, time_str, category, span_note, "None", reminder_min)
+        d += timedelta(days=1)
+        count += 1
+    return count
 
 def update_event(date_str, idx, title, time_str, category, note, recurrence, reminder_min):
     evts = st.session_state.events.get(date_str, [])
@@ -548,6 +580,34 @@ with st.sidebar:
             st.markdown(f'<div class="reminder-alert"><div style="font-size:0.82rem;font-weight:700;color:#fff0a0;">⏰ {r["title"]}</div><div style="font-size:0.70rem;color:rgba(255,240,160,0.75);">In {r["remind_in_min"]} min · {r["evt_dt"].strftime("%H:%M")}</div></div>', unsafe_allow_html=True)
         st.markdown("---")
 
+    # Quick-add form pre-filled from a drag selection on the Month grid
+    if st.session_state.drag_range:
+        drag_start, drag_end = st.session_state.drag_range
+        span_label = drag_start.strftime("%b %-d") if drag_start == drag_end else f'{drag_start.strftime("%b %-d")} \u2192 {drag_end.strftime("%b %-d")}'
+        st.markdown(f'<div class="section-heading">🖱️ Dragged Range: {span_label}</div>', unsafe_allow_html=True)
+        with st.form("drag_add_form", clear_on_submit=True):
+            dg_title    = st.text_input("Title", placeholder="Event name…", key="dg_title")
+            dg_time     = st.text_input("Time", placeholder="e.g. 14:00 or All day", key="dg_time")
+            dg_cat      = st.selectbox("Category", list(CATEGORY_COLORS.keys()), key="dg_cat")
+            dg_note     = st.text_area("Notes", placeholder="Optional notes…", height=55, key="dg_note")
+            dg_reminder = st.selectbox("🔔 Reminder", [0,5,10,15,30,60,120],
+                                       format_func=lambda x: "None" if x==0 else f"{x} min before", key="dg_reminder")
+            c_save, c_cancel = st.columns(2)
+            with c_save:
+                submitted = st.form_submit_button("＋ Create Event", use_container_width=True)
+            with c_cancel:
+                cancelled = st.form_submit_button("✕ Cancel", use_container_width=True)
+            if submitted and dg_title.strip():
+                n = add_multi_day_event(drag_start, drag_end, dg_title.strip(), dg_time or "All day",
+                                        dg_cat, dg_note, dg_reminder)
+                st.session_state.drag_range = None
+                st.success(f"Created across {n} day(s)! 🌠")
+                st.rerun()
+            if cancelled:
+                st.session_state.drag_range = None
+                st.rerun()
+        st.markdown("---")
+
     # Add Event
     st.markdown('<div class="section-heading">✦ New Event</div>', unsafe_allow_html=True)
     with st.form("add_event_form", clear_on_submit=True):
@@ -697,43 +757,143 @@ if st.session_state.editing_evt:
     render_edit_modal()
 
 # ─────────────────────────────────────────────────────────────────────────────
-# MONTH VIEW
+# MONTH VIEW  (with drag-to-create)
 # ─────────────────────────────────────────────────────────────────────────────
 if view == "Month":
-    month_name = cd.strftime("%B %Y")
-    html = f'<div class="cal-card"><div class="cal-header">{month_name}</div>'
-    html += '<div class="dow-row">'
-    for dow in ["Sun","Mon","Tue","Wed","Thu","Fri","Sat"]:
-        html += f'<div class="dow-cell">{dow}</div>'
-    html += '</div><div class="cal-grid">'
+    import streamlit.components.v1 as components
 
+    month_name = cd.strftime("%B %Y")
     cal = calendar.Calendar(firstweekday=6)
-    for week in cal.monthdatescalendar(cd.year, cd.month):
+    weeks = cal.monthdatescalendar(cd.year, cd.month)
+
+    # Build a JSON-serializable payload describing every cell so the JS grid
+    # can render identical content to the old static HTML, but with drag support.
+    cells = []
+    for week in weeks:
         for day in week:
             is_today    = (day == today)
             other_month = (day.month != cd.month)
-            css = "day-cell" + (" today" if is_today else "") + (" other-month" if other_month else "")
-            holiday = get_holiday(day)
-            mood_key = day.isoformat()
-            mood = st.session_state.moods.get(mood_key, "")
-            num_inner = f'<span class="day-num-inner">{day.day}</span>' if is_today else str(day.day)
-            mood_pip = f'<span class="mood-pip">{mood}</span>' if mood else ""
-            html += f'<div class="{css}"><div class="day-num">{num_inner}{mood_pip}</div>'
-            if holiday:
-                html += f'<span class="holiday-chip">{holiday}</span>'
-            day_evts = events_for_date(day)
+            holiday     = get_holiday(day)
+            mood        = st.session_state.moods.get(day.isoformat(), "")
+            day_evts    = events_for_date(day)
+            chips = []
             for e in day_evts[:2]:
                 c = get_color(e.get("category","⚪ Other"))
                 icon = "🎂" if e.get("is_birthday") else ("🔁" if (e.get("recurrence","None") != "None" or e.get("_recurring")) else "")
-                html += (f'<span class="event-chip" style="background:{c["bg"]};'
-                         f'color:{c["text"]};border-left-color:{c["border"]}">'
-                         f'<span class="event-chip-dot" style="background:{c["dot"]}"></span>'
-                         f'{e["title"]}{" "+icon if icon else ""}</span>')
-            if len(day_evts) > 2:
-                html += f'<span style="font-size:0.60rem;color:rgba(200,210,255,0.5);margin-top:2px;display:block;">+{len(day_evts)-2} more</span>'
-            html += '</div>'
-    html += '</div></div>'
-    st.markdown(html, unsafe_allow_html=True)
+                chips.append({"title": e["title"], "bg": c["bg"], "text": c["text"], "border": c["border"], "dot": c["dot"], "icon": icon})
+            cells.append({
+                "iso": day.isoformat(), "day": day.day,
+                "today": is_today, "other_month": other_month,
+                "holiday": holiday or "", "mood": mood,
+                "chips": chips, "more": max(0, len(day_evts) - 2),
+            })
+
+    cells_json = json.dumps(cells)
+    dow_labels = json.dumps(["Sun","Mon","Tue","Wed","Thu","Fri","Sat"])
+
+    components.html(f"""
+<!DOCTYPE html><html><head>
+<link href="https://fonts.googleapis.com/css2?family=Outfit:wght@400;500;600;700;800&display=swap" rel="stylesheet">
+<style>
+*{{box-sizing:border-box;margin:0;padding:0;}}
+body{{font-family:'Outfit',sans-serif;background:transparent;color:#fff;user-select:none;}}
+#card{{background:rgba(255,255,255,0.04);backdrop-filter:blur(20px);border:1px solid rgba(255,255,255,0.09);
+border-radius:20px;padding:1.4rem 1.2rem 1.2rem;box-shadow:0 8px 40px rgba(0,0,0,0.4), inset 0 1px 0 rgba(255,255,255,0.08);}}
+#hdr{{font-size:1.45rem;font-weight:800;text-align:center;margin-bottom:0.4rem;
+background:linear-gradient(90deg,{_th["accent"]},{_th["accent2"]});-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;}}
+#hint{{text-align:center;font-size:0.66rem;color:rgba(180,200,255,0.45);margin-bottom:0.9rem;letter-spacing:0.04em;}}
+#dowrow{{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;margin-bottom:7px;}}
+.dowcell{{text-align:center;font-size:0.65rem;font-weight:700;color:{_th["dow"]};letter-spacing:0.10em;text-transform:uppercase;padding:5px 0;}}
+#grid{{display:grid;grid-template-columns:repeat(7,1fr);gap:5px;}}
+.daycell{{min-height:80px;background:{_th["grid_bg"]};border:1px solid {_th["grid_b"]};border-radius:12px;
+padding:7px 8px 5px;position:relative;cursor:pointer;transition:background 0.1s ease,border-color 0.1s ease;}}
+.daycell:hover{{background:rgba(255,255,255,0.055);border-color:rgba(255,255,255,0.18);}}
+.daycell.today{{background:{_th["today"]};border-color:{_th["today_b"]};box-shadow:0 0 0 1px {_th["today_b"]}60, inset 0 1px 0 {_th["accent"]}20;}}
+.daycell.other{{opacity:0.25;pointer-events:none;}}
+.daycell.dragsel{{background:{_th["accent"]}30 !important;border-color:{_th["accent"]} !important;
+box-shadow:0 0 0 2px {_th["accent"]}55 !important;}}
+.daynum{{font-size:0.80rem;font-weight:700;line-height:1;margin-bottom:3px;display:flex;align-items:center;justify-content:space-between;}}
+.daycell.today .daynuminner{{color:{_th["accent"]};background:{_th["accent"]}22;border-radius:6px;padding:1px 5px;display:inline-block;}}
+.chip{{font-size:0.62rem;font-weight:600;padding:2px 7px 2px 5px;border-radius:6px;margin-top:3px;white-space:nowrap;
+overflow:hidden;text-overflow:ellipsis;max-width:100%;display:flex;align-items:center;gap:4px;border-left:3px solid;line-height:1.4;}}
+.chipdot{{width:5px;height:5px;border-radius:50%;flex-shrink:0;}}
+.holchip{{font-size:0.60rem;font-weight:500;color:rgba(255,230,150,0.85);margin-top:2px;display:block;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;}}
+.moodpip{{font-size:0.78rem;float:right;margin-top:-1px;}}
+.morechip{{font-size:0.60rem;color:rgba(200,210,255,0.5);margin-top:2px;display:block;}}
+</style></head><body>
+<div id="card">
+  <div id="hdr">{month_name}</div>
+  <div id="hint">🖱️ Click a day to select it &nbsp;·&nbsp; Drag across days to create a multi-day event</div>
+  <div id="dowrow"></div>
+  <div id="grid"></div>
+</div>
+<script>
+const cells = {cells_json};
+const dows = {dow_labels};
+const dowrow = document.getElementById("dowrow");
+dows.forEach(d => {{ const el = document.createElement("div"); el.className="dowcell"; el.textContent=d; dowrow.appendChild(el); }});
+
+const grid = document.getElementById("grid");
+let dragging = false;
+let startIdx = null;
+let curIdx = null;
+
+function renderSelection() {{
+  const lo = Math.min(startIdx, curIdx), hi = Math.max(startIdx, curIdx);
+  document.querySelectorAll(".daycell").forEach((el, i) => {{
+    el.classList.toggle("dragsel", dragging && i >= lo && i <= hi);
+  }});
+}}
+
+cells.forEach((c, i) => {{
+  const el = document.createElement("div");
+  el.className = "daycell" + (c.today ? " today" : "") + (c.other_month ? " other" : "");
+  el.dataset.iso = c.iso;
+
+  let html = '<div class="daynum"><span class="' + (c.today ? "daynuminner" : "") + '">' + c.day + '</span>';
+  if (c.mood) html += '<span class="moodpip">' + c.mood + '</span>';
+  html += '</div>';
+  if (c.holiday) html += '<span class="holchip">' + c.holiday + '</span>';
+  c.chips.forEach(ch => {{
+    html += '<span class="chip" style="background:' + ch.bg + ';color:' + ch.text + ';border-left-color:' + ch.border + '">'
+          + '<span class="chipdot" style="background:' + ch.dot + '"></span>' + ch.title + (ch.icon ? " " + ch.icon : "") + '</span>';
+  }});
+  if (c.more > 0) html += '<span class="morechip">+' + c.more + ' more</span>';
+  el.innerHTML = html;
+
+  el.addEventListener("mousedown", (ev) => {{
+    if (c.other_month) return;
+    dragging = true; startIdx = i; curIdx = i;
+    renderSelection();
+    ev.preventDefault();
+  }});
+  el.addEventListener("mouseenter", () => {{
+    if (dragging) {{ curIdx = i; renderSelection(); }}
+  }});
+  el.addEventListener("touchstart", () => {{
+    if (c.other_month) return;
+    dragging = true; startIdx = i; curIdx = i; renderSelection();
+  }});
+
+  grid.appendChild(el);
+}});
+
+function finishDrag() {{
+  if (!dragging) return;
+  dragging = false;
+  const lo = Math.min(startIdx, curIdx), hi = Math.max(startIdx, curIdx);
+  const startIso = cells[lo].iso, endIso = cells[hi].iso;
+  renderSelection();
+  const url = new URL(window.parent.location.href);
+  url.searchParams.set("drag_start", startIso);
+  url.searchParams.set("drag_end", endIso);
+  window.parent.location.href = url.toString();
+}}
+document.addEventListener("mouseup", finishDrag);
+document.addEventListener("touchend", finishDrag);
+</script>
+</body></html>
+""", height=80 + len(weeks)*95, scrolling=False)
 
     # Selected day panel
     sel = st.session_state.selected_date
@@ -768,7 +928,7 @@ if view == "Month":
         holiday = get_holiday(sel)
         if holiday:
             st.markdown(f'<div style="background:rgba(255,220,80,0.10);border:1px solid rgba(255,220,80,0.30);border-radius:12px;padding:10px 14px;margin-bottom:0.5rem;font-size:0.88rem;color:rgba(255,230,130,0.90);">{holiday}</div>', unsafe_allow_html=True)
-        st.markdown('<p style="color:rgba(200,210,255,0.35);font-size:0.85rem">No events — add one from the sidebar.</p>', unsafe_allow_html=True)
+        st.markdown('<p style="color:rgba(200,210,255,0.35);font-size:0.85rem">No events — add one from the sidebar, or drag across days above.</p>', unsafe_allow_html=True)
 
     pick = st.date_input("Jump to date", value=sel, label_visibility="collapsed", key="jump_picker")
     if pick != sel:
@@ -801,7 +961,7 @@ elif view == "Week":
                 f'color:{_th["dow"]}">{day.strftime("%a").upper()}</div>'
                 f'<div style="font-size:1.2rem;font-weight:800;margin-bottom:2px;'
                 f'color:{""+_th["accent"] if is_today else "#ffffff"}">{day.day} {mood}</div>'
-                f'{"<div style=\"font-size:0.58rem;color:rgba(255,220,100,0.80);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\">"+holiday+"</div>" if holiday else ""}',
+                f'{"<div style=\\"font-size:0.58rem;color:rgba(255,220,100,0.80);margin-bottom:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;\\">"+holiday+"</div>" if holiday else ""}',
                 unsafe_allow_html=True)
             for e in events_for_date(day):
                 c = get_color(e.get("category","⚪ Other"))
@@ -967,7 +1127,7 @@ elif view == "Search":
         st.markdown('<div style="color:rgba(200,210,255,0.28);padding:2rem 0;text-align:center;">Start typing to search your events…</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# STATS VIEW  ✨ NEW
+# STATS VIEW
 # ─────────────────────────────────────────────────────────────────────────────
 elif view == "📊 Stats":
     st.markdown('<div class="cal-header" style="text-align:left">📊 Calendar Insights</div>', unsafe_allow_html=True)
@@ -978,7 +1138,6 @@ elif view == "📊 Stats":
     if not total:
         st.markdown('<div style="text-align:center;padding:4rem 0;color:rgba(200,210,255,0.30);">🌌 No events yet. Add some to see your insights!</div>', unsafe_allow_html=True)
     else:
-        # Top stats
         today_count   = len(events_for_date(today))
         week_start    = today - timedelta(days=(today.weekday()+1)%7)
         week_count    = sum(len(events_for_date(week_start + timedelta(days=i))) for i in range(7))
@@ -997,7 +1156,6 @@ elif view == "📊 Stats":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Category breakdown
         st.markdown('<div class="section-heading">Events by Category</div>', unsafe_allow_html=True)
         cat_counts = {}
         for _, e in all_evts:
@@ -1020,7 +1178,6 @@ elif view == "📊 Stats":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Mood summary
         if st.session_state.moods:
             st.markdown('<div class="section-heading">Your Mood History</div>', unsafe_allow_html=True)
             mood_counts = {}
@@ -1038,7 +1195,6 @@ elif view == "📊 Stats":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Upcoming birthdays
         birthdays = [(ds, e) for ds, e in all_evts if e.get("is_birthday")]
         if birthdays:
             st.markdown('<div class="section-heading">🎂 Upcoming Birthdays</div>', unsafe_allow_html=True)
@@ -1063,7 +1219,6 @@ elif view == "📊 Stats":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        # Busiest days
         st.markdown('<div class="section-heading">Busiest Days (Next 30 Days)</div>', unsafe_allow_html=True)
         day_loads = []
         for delta in range(30):
@@ -1084,7 +1239,7 @@ elif view == "📊 Stats":
                 f'</div>', unsafe_allow_html=True)
 
 # ─────────────────────────────────────────────────────────────────────────────
-# EXPORT VIEW  ✨ NEW
+# EXPORT VIEW
 # ─────────────────────────────────────────────────────────────────────────────
 elif view == "📤 Export":
     st.markdown('<div class="cal-header" style="text-align:left">📤 Export & Import</div>', unsafe_allow_html=True)
@@ -1092,7 +1247,6 @@ elif view == "📤 Export":
     total_events = sum(len(v) for v in st.session_state.events.values())
     st.markdown(f'<div style="color:rgba(180,200,255,0.60);font-size:0.85rem;margin-bottom:1.2rem;">{total_events} event{"s" if total_events!=1 else ""} in your calendar</div>', unsafe_allow_html=True)
 
-    # Export
     st.markdown('<div class="export-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-heading">⬇️ Export Your Events</div>', unsafe_allow_html=True)
 
@@ -1121,7 +1275,6 @@ elif view == "📤 Export":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Import
     st.markdown('<div class="export-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-heading">⬆️ Import Events (JSON)</div>', unsafe_allow_html=True)
     uploaded = st.file_uploader("Upload a previously exported CosmoCal JSON file", type=["json"])
@@ -1138,7 +1291,6 @@ elif view == "📤 Export":
 
     st.markdown("<br>", unsafe_allow_html=True)
 
-    # Holiday presets
     st.markdown('<div class="export-card">', unsafe_allow_html=True)
     st.markdown('<div class="section-heading">🎉 Add Holiday Presets</div>', unsafe_allow_html=True)
     st.markdown('<div style="font-size:0.82rem;color:rgba(180,200,255,0.60);margin-bottom:0.8rem;">Add US holidays for a specific year to your calendar.</div>', unsafe_allow_html=True)
@@ -1160,3 +1312,5 @@ elif view == "📤 Export":
         st.success(f"Added {added} holidays for {year_for_holidays}! 🎆")
         st.rerun()
     st.markdown('</div>', unsafe_allow_html=True)
+PYEOF
+python3 -c "import ast; ast.parse(open('/home/claude/cosmocal.py').read()); print('OK syntax')"
