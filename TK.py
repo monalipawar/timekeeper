@@ -64,6 +64,7 @@ DEFAULTS = {
     "search_query": "", "moods": {},
     "show_export": False,
     "drag_range": None,
+    "drag_time_range": None,
 }
 for k, v in DEFAULTS.items():
     if k not in st.session_state:
@@ -86,6 +87,20 @@ if "drag_start" in qp and "drag_end" in qp:
     # clear so it doesn't re-trigger on every rerun
     del st.query_params["drag_start"]
     del st.query_params["drag_end"]
+
+# READ TIME-DRAG SELECTION FROM QUERY PARAMS (set by the JS Day-view timeline)
+if "drag_day" in qp and "drag_time_start" in qp and "drag_time_end" in qp:
+    try:
+        td = date.fromisoformat(qp["drag_day"])
+        t_start = qp["drag_time_start"]
+        t_end = qp["drag_time_end"]
+        st.session_state.drag_time_range = (td, t_start, t_end)
+        st.session_state.selected_date = td
+    except Exception:
+        pass
+    del st.query_params["drag_day"]
+    del st.query_params["drag_time_start"]
+    del st.query_params["drag_time_end"]
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # PERSISTENCE
@@ -608,6 +623,32 @@ with st.sidebar:
                 st.rerun()
         st.markdown("---")
 
+    # Quick-add form pre-filled from a drag selection on the Day timeline
+    if st.session_state.drag_time_range:
+        dtr_date, dtr_start, dtr_end = st.session_state.drag_time_range
+        st.markdown(f'<div class="section-heading">🖱️ Dragged Time: {dtr_start} \u2013 {dtr_end}</div>', unsafe_allow_html=True)
+        with st.form("drag_time_add_form", clear_on_submit=True):
+            dt_title    = st.text_input("Title", placeholder="Event name…", key="dt_title")
+            dt_cat      = st.selectbox("Category", list(CATEGORY_COLORS.keys()), key="dt_cat")
+            dt_note     = st.text_area("Notes", placeholder="Optional notes…", height=55, key="dt_note")
+            dt_reminder = st.selectbox("🔔 Reminder", [0,5,10,15,30,60,120],
+                                       format_func=lambda x: "None" if x==0 else f"{x} min before", key="dt_reminder")
+            c_save, c_cancel = st.columns(2)
+            with c_save:
+                dt_submitted = st.form_submit_button("＋ Create Event", use_container_width=True)
+            with c_cancel:
+                dt_cancelled = st.form_submit_button("✕ Cancel", use_container_width=True)
+            if dt_submitted and dt_title.strip():
+                note_with_span = (dt_note + "\n" if dt_note else "") + f"({dtr_start} \u2013 {dtr_end})"
+                add_event(dtr_date, dt_title.strip(), dtr_start, dt_cat, note_with_span, "None", dt_reminder)
+                st.session_state.drag_time_range = None
+                st.success(f"Created at {dtr_start}! 🌠")
+                st.rerun()
+            if dt_cancelled:
+                st.session_state.drag_time_range = None
+                st.rerun()
+        st.markdown("---")
+
     # Add Event
     st.markdown('<div class="section-heading">✦ New Event</div>', unsafe_allow_html=True)
     with st.form("add_event_form", clear_on_submit=True):
@@ -1033,17 +1074,27 @@ body{{font-family:'Outfit',sans-serif;background:transparent;color:#fff;}}
 .evt-block{{position:absolute;left:44px;right:0;border-radius:8px;padding:4px 10px;font-size:12px;font-weight:600;pointer-events:none;overflow:hidden;white-space:nowrap;text-overflow:ellipsis;z-index:2;border-left:3px solid;}}
 #now-marker{{position:absolute;left:42px;right:0;height:2px;background:rgba(255,100,100,0.85);z-index:5;pointer-events:none;}}
 #now-dot{{position:absolute;left:37px;width:8px;height:8px;background:rgba(255,100,100,0.85);border-radius:50%;margin-top:-3px;z-index:5;pointer-events:none;box-shadow:0 0 8px rgba(255,100,100,0.6);}}
+.drag-block{{position:absolute;left:44px;right:0;border-radius:8px;background:{_th["accent"]}33;
+border:1.5px dashed {_th["accent"]};z-index:4;pointer-events:none;}}
+.drag-label{{position:absolute;left:50px;top:2px;font-size:11px;font-weight:700;color:{_th["accent"]};pointer-events:none;}}
 </style></head><body>
 <div id="tl-wrap">
-  <div id="tl-hint">24-Hour Timeline</div>
+  <div id="tl-hint">🖱️ Drag on the timeline to create an event</div>
   <div id="tl-scroll"><div id="tl-inner">
     <div id="now-marker"></div><div id="now-dot"></div>
   </div></div>
 </div>
 <script>
 const HOUR_PX=52;
+const SNAP_MIN=15; // snap to 15-min increments
 const events={evts_json};
 function timeStrToHour(t){{if(!t||t==="All day")return null;const[h,m]=t.split(":").map(Number);return h+(m||0)/60;}}
+function hourToTimeStr(h){{
+  let totalMin=Math.round(h*60/SNAP_MIN)*SNAP_MIN;
+  totalMin=Math.max(0,Math.min(24*60-1,totalMin));
+  const hh=Math.floor(totalMin/60), mm=totalMin%60;
+  return hh.toString().padStart(2,"0")+":"+mm.toString().padStart(2,"0");
+}}
 const inner=document.getElementById("tl-inner");
 for(let h=0;h<24;h++){{
   const row=document.createElement("div");row.className="hour-row";row.style.top=(h*HOUR_PX)+"px";
@@ -1062,6 +1113,58 @@ events.forEach(e=>{{
 function drawNow(){{const now=new Date();const frac=(now.getHours()+now.getMinutes()/60)*HOUR_PX;document.getElementById("now-marker").style.top=frac+"px";document.getElementById("now-dot").style.top=frac+"px";}}
 drawNow();setInterval(drawNow,60000);
 document.getElementById("tl-scroll").scrollTop=8*HOUR_PX-20;
+
+// ── Drag-to-create ──
+let dragging=false, dragStartY=0, dragBlock=null, dragLabel=null;
+
+function yToHour(clientY){{
+  const rect=inner.getBoundingClientRect();
+  const y=clientY-rect.top+document.getElementById("tl-scroll").scrollTop;
+  return Math.max(0,Math.min(24,y/HOUR_PX));
+}}
+
+function startDrag(clientY){{
+  dragging=true;
+  dragStartY=yToHour(clientY);
+  dragBlock=document.createElement("div");
+  dragBlock.className="drag-block";
+  dragLabel=document.createElement("div");
+  dragLabel.className="drag-label";
+  dragBlock.appendChild(dragLabel);
+  inner.appendChild(dragBlock);
+  updateDrag(clientY);
+}}
+function updateDrag(clientY){{
+  if(!dragging) return;
+  const curHour=yToHour(clientY);
+  const lo=Math.min(dragStartY,curHour), hi=Math.max(dragStartY,curHour);
+  const startStr=hourToTimeStr(lo), endStr=hourToTimeStr(Math.max(hi,lo+0.25));
+  dragBlock.style.top=(lo*HOUR_PX)+"px";
+  dragBlock.style.height=Math.max(HOUR_PX*0.25,(hi-lo)*HOUR_PX)+"px";
+  dragLabel.textContent=startStr+" \u2013 "+endStr;
+}}
+function endDrag(){{
+  if(!dragging) return;
+  dragging=false;
+  if(!dragBlock) return;
+  const topPx=parseFloat(dragBlock.style.top);
+  const heightPx=parseFloat(dragBlock.style.height);
+  const startHour=topPx/HOUR_PX, endHour=(topPx+heightPx)/HOUR_PX;
+  const startStr=hourToTimeStr(startHour), endStr=hourToTimeStr(Math.max(endHour,startHour+0.25));
+  dragBlock.remove(); dragBlock=null;
+  const url=new URL(window.parent.location.href);
+  url.searchParams.set("drag_day","{cd.isoformat()}");
+  url.searchParams.set("drag_time_start", startStr);
+  url.searchParams.set("drag_time_end", endStr);
+  window.parent.location.href=url.toString();
+}}
+
+inner.addEventListener("mousedown",(ev)=>{{ startDrag(ev.clientY); ev.preventDefault(); }});
+document.addEventListener("mousemove",(ev)=>{{ updateDrag(ev.clientY); }});
+document.addEventListener("mouseup",endDrag);
+inner.addEventListener("touchstart",(ev)=>{{ startDrag(ev.touches[0].clientY); }});
+document.addEventListener("touchmove",(ev)=>{{ updateDrag(ev.touches[0].clientY); }});
+document.addEventListener("touchend",endDrag);
 </script></body></html>
 """, height=560, scrolling=False)
 
